@@ -12,7 +12,7 @@ load_dotenv()
 # Настройки
 
 WEBSITE = "https://www.korma.gov.by/ru/inform_people-ru/"
-INTERVAL = 300
+INTERVAL = 14440
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
