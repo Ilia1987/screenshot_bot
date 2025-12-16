@@ -27,7 +27,11 @@ is_active = False
 async def make_screenshot_bytes():
     """Делает скриншот и возвращает bytes"""
     async with async_playwright() as p:
-        browser = await p.chromium.launch(channel='chrome', headless=False)
+        #browser = await p.chromium.launch(channel='chrome', headless=True)
+        browser = await p.chromium.launch(
+            headless=True,  # True для сервера без графики
+            args=['--no-sandbox', '--disable-dev-shm-usage']  # Для Docker/сервера
+        )
         page = await browser.new_page()
         
         try:
