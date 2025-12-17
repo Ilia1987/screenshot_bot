@@ -27,26 +27,25 @@ is_active = False
 async def make_screenshot_bytes():
     """Делает скриншот и возвращает bytes"""
     async with async_playwright() as p:
-    # Используем chromium из системы
-    browser = await p.chromium.launch(
-        executable_path="/usr/bin/chromium",
-        headless=True,
-        args=['--no-sandbox', '--disable-dev-shm-usage']
-    )
+        # Уберите executable_path или проверьте, что Chrome установлен
+        browser = await p.chromium.launch(
+            headless=True,
+            args=['--no-sandbox', '--disable-dev-shm-usage']
+        )
         page = await browser.new_page()
-        
+
         try:
             # Настраиваем размер окна
             await page.set_viewport_size({"width": 1280, "height": 800})
-            
+
             logger.info(f"Делаю скриншот: {WEBSITE}")
             await page.goto(WEBSITE, wait_until="networkidle")
-            
+
             # Делаем скриншот в буфер
             screenshot_bytes = await page.screenshot(full_page=True, type="png")
-            
+
             return screenshot_bytes
-            
+
         finally:
             await browser.close()
 
