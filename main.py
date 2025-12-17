@@ -1,145 +1,195 @@
-import asyncio
 import os
-import logging
+import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import BufferedInputFile
-from playwright.async_api import async_playwright
+from aiogram.types import BufferedInputFile  # Импортируем нужный класс
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+import chromedriver_autoinstaller
 from dotenv import load_dotenv
 
 load_dotenv()
-
-# Настройки
-
 WEBSITE = "https://www.korma.gov.by/ru/inform_people-ru/"
 INTERVAL = 14440
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 bot = Bot(token=os.getenv('BOT_TOKEN'))
 dp = Dispatcher()
+chat_id = None
+active = False
 
-# Храним chat_id здесь
-target_chat_id = None
-is_active = False
-
-async def make_screenshot_bytes():
-    """Делает скриншот и возвращает bytes"""
-    async with async_playwright() as p:
-        # Уберите executable_path или проверьте, что Chrome установлен
-        browser = await p.chromium.launch(
-            headless=True,
-            args=['--no-sandbox', '--disable-dev-shm-usage']
-        )
-        page = await browser.new_page()
-
-        try:
-            # Настраиваем размер окна
-            await page.set_viewport_size({"width": 1280, "height": 800})
-
-            logger.info(f"Делаю скриншот: {WEBSITE}")
-            await page.goto(WEBSITE, wait_until="networkidle")
-
-            # Делаем скриншот в буфер
-            screenshot_bytes = await page.screenshot(full_page=True, type="png")
-
-            return screenshot_bytes
-
-        finally:
-            await browser.close()
+def make_screenshot():
+    """Делает скриншот заранее известного сайта"""
+    # Устанавливаем chromedriver
+    chromedriver_autoinstaller.install()
+    
+    # Настраиваем Chrome
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--window-size=1920,1080")
+    
+    # Создаем драйвер
+    driver = webdriver.Chrome(options=options)
+    
+    try:
+        # Открываем заранее известный сайт
+        driver.get(WEBSITE)
+        
+        # Ждем немного для загрузки
+        import time
+        time.sleep(2)
+        
+        # Делаем скриншот
+        screenshot = driver.get_screenshot_as_png()
+        return screenshot
+        
+    finally:
+        driver.quit()
 
 async def send_screenshot():
     """Отправляет скриншот"""
-    if not target_chat_id or not is_active:
+    if not chat_id or not active:
         return
-    
     try:
-        # Получаем скриншот в виде bytes
-        screenshot_bytes = await make_screenshot_bytes()
+        # Делаем скриншот
+        screenshot_bytes = await asyncio.to_thread(make_screenshot)
         
-        if screenshot_bytes:
-            # Создаем BufferedInputFile из bytes
-            photo = BufferedInputFile(
-                file=screenshot_bytes,
-                filename="screenshot.png"
-            )
-            
-            # Отправляем фото
-            await bot.send_photo(
-                chat_id=target_chat_id,
-                photo=photo,
-                caption=f"📸 {WEBSITE}"
-            )
-            
-            logger.info(f"✅ Скриншот отправлен в чат {target_chat_id}")
-            
+        # Создаем InputFile из байтов скриншота
+        photo_file = BufferedInputFile(
+            screenshot_bytes, 
+            filename="screenshot.png"
+        )
+        
+        # Отправляем в Telegram
+        await bot.send_photo(
+            chat_id=chat_id,
+            photo=photo_file,
+            caption=f"📸 Скриншот {WEBSITE}"
+        )
+        print(f"✅ Скриншот отправлен в чат {chat_id}")
     except Exception as e:
-        logger.error(f"❌ Ошибка: {e}")
-        try:
-            await bot.send_message(
-                target_chat_id,
-                f"❌ Ошибка: {str(e)[:100]}..."
-            )
-        except:
-            pass
+        print(f"❌ Ошибка: {e}")
 
 async def auto_send():
-    """Автоматическая отправка"""
+    """Автоотправка по расписанию"""
     while True:
-        if is_active and target_chat_id:
+        if active and chat_id:  # Проверяем, активен ли бот
             await send_screenshot()
         await asyncio.sleep(INTERVAL)
 
 @dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    """Начать отправку скриншотов в этот чат"""
-    global target_chat_id, is_active
+async def start(msg):
+    """Начать автоотправку"""
+    global chat_id, active
+    chat_id = msg.chat.id
+    active = True
     
-    target_chat_id = message.chat.id
-    is_active = True
-    
-    await message.answer(
-        f"✅ Бот запущен!\n"
-        f"Сайт: {WEBSITE}\n"
-        f"Интервал: {INTERVAL//60} минут"
+    await msg.answer(
+        f"✅ Бот запущен\n"
+        f"🌐 Сайт: {WEBSITE}\n"
+        f"⏰ Скриншоты каждые {INTERVAL//60} минут\n\n"
+        f"Используйте:\n"
+        f"/send - скриншот сейчас\n"
+        f"/stop - остановить\n"
+        f"/status - статус"
     )
     
     # Первый скриншот сразу
     await send_screenshot()
 
-@dp.message(Command("now"))
-async def cmd_now(message: types.Message):
-    """Получить скриншот сейчас"""
-    if not target_chat_id:
-        await message.answer("Сначала отправьте /start")
-        return
-    
-    if message.chat.id != target_chat_id:
-        return
-    
-    await send_screenshot()
+@dp.message(Command("send"))
+async def send_now(msg):
+    """Скриншот сейчас"""
+    if chat_id:
+        await msg.answer("⏳ Делаю скриншот...")
+        await send_screenshot()
+    else:
+        await msg.answer("❌ Сначала отправьте /start")
 
 @dp.message(Command("stop"))
-async def cmd_stop(message: types.Message):
+async def stop(msg):
     """Остановить автоотправку"""
-    global is_active
-    
-    if message.chat.id != target_chat_id:
+    global active
+    active = False
+    await msg.answer("⏸ Автоотправка остановлена\n/start - возобновить")
+
+@dp.message(Command("restart"))
+async def restart(msg):
+    """Возобновить автоотправку"""
+    global active
+    if not chat_id:
+        await msg.answer("❌ Сначала отправьте /start")
         return
     
-    is_active = False
-    await message.answer("⏸ Остановлено")
+    active = True
+    await msg.answer("▶️ Автоотправка возобновлена!\nСледующий скриншот через указанный интервал.")
+    
+    # Отправляем скриншот сразу
+    await msg.answer("🔄 Отправляю скриншот...")
+    await send_screenshot()
+
+@dp.message(Command("status"))
+async def status(msg):
+    """Показать статус бота"""
+    status_text = "✅ Активен" if active else "⏸ Остановлен"
+    
+    await msg.answer(
+        f"📊 Статус бота:\n\n"
+        f"• Статус: {status_text}\n"
+        f"• Чат ID: {chat_id or 'не настроен'}\n"
+        f"• Сайт: {WEBSITE}\n"
+        f"• Интервал: {INTERVAL//60} минут"
+    )
+
+@dp.message(Command("help"))
+async def help_cmd(msg):
+    """Помощь"""
+    await msg.answer(
+        f"🤖 Бот для скриншотов сайта\n\n"
+        f"Сайт: {WEBSITE}\n\n"
+        f"📋 Команды:\n"
+        f"• /start - запустить бота\n"
+        f"• /send - скриншот сейчас\n"
+        f"• /stop - остановить автоотправку\n"
+        f"• /restart - возобновить автоотправку\n"
+        f"• /status - статус бота\n"
+        f"• /help - эта справка"
+    )
+
+@dp.message()
+async def other(msg):
+    """Все остальные сообщения"""
+    await msg.answer(
+        f"🤖 Я делаю скриншоты сайта:\n{WEBSITE}\n\n"
+        f"Используйте команды:\n"
+        f"/start - запустить бота\n"
+        f"/send - скриншот сейчас\n"
+        f"/stop - остановить\n"
+        f"/help - справка"
+    )
 
 async def main():
-    """Запуск"""
-    logger.info(f"Бот запущен для {WEBSITE}")
+    """Основная функция"""
+    print(f"🤖 Бот запускается...")
+    print(f"🌐 Сайт: {WEBSITE}")
+    print(f"⏰ Интервал: {INTERVAL//60} минут")
     
-    # Запускаем автоотправку в фоне
+    # Запускаем автоотправку
     asyncio.create_task(auto_send())
     
     # Запускаем бота
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
+    # Проверяем наличие обязательных переменных
+    if not os.getenv('BOT_TOKEN'):
+        print("❌ Ошибка: Не найден BOT_TOKEN в переменных окружения")
+        print("   Создайте файл .env с содержанием:")
+        print("   BOT_TOKEN=ваш_токен_бота")
+        exit(1)
+    
+    if not WEBSITE:
+        print("❌ Ошибка: Не указан WEBSITE в коде")
+        print("   Укажите сайт для скриншотов в переменной WEBSITE")
+        exit(1)
+    
     asyncio.run(main())
