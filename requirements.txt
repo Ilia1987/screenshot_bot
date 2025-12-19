@@ -1,38 +1,27 @@
-﻿# Основные зависимости
-aiogram==3.23.0
-aiohttp==3.9.5  # Исправлено на существующую версию
+﻿aiogram==3.23.0
+aiohttp==3.9.5 
 aiohappyeyeballs==2.6.1
 aiosignal==1.4.0
 annotated-types==0.7.0
 attrs==25.4.0
 certifi==2025.11.12
-
-# Работа с Chrome/Selenium (если нужно)
 selenium==4.39.0
-webdriver-manager==4.0.2  # Вместо chromedriver-autoinstaller
-
-# Pydantic и типы
+webdriver-manager==4.0.2
 pydantic==2.12.5
 pydantic_core==2.41.5
 typing_extensions==4.15.0
 typing-inspection==0.4.2
-
-# Async и сетевые библиотеки
 aiofiles==25.1.0
 multidict==6.7.0
 yarl==1.22.0
 frozenlist==1.8.0
-
-# Для trio (если используете)
 trio==0.32.0
 trio-websocket==0.12.2
 outcome==1.3.0.post0
 sniffio==1.3.1
 wsproto==1.3.2
 h11==0.16.0
-
-# Дополнительные
-python-dotenv>=1.0.0  # Только один dotenv
+python-dotenv==1.0.0
 magic-filter==1.0.12
 sortedcontainers==2.4.0
 packaging==25.0
