@@ -1,9 +1,8 @@
 FROM python:3.11-slim
 
-# Шаг 1: Установка системных зависимостей
+# Установка минимальных зависимостей для Chrome
 RUN apt-get update && apt-get install -y \
     wget \
-    gnupg \
     ca-certificates \
     fonts-liberation \
     libappindicator3-1 \
@@ -42,23 +41,15 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
-# Шаг 2: Установка Chrome (БЕЗ apt-key!)
-RUN wget -q -O /usr/share/keyrings/google-chrome-keyring.gpg https://dl.google.com/linux/linux_signing_key.pub && \
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list && \
+# СКАЧИВАЕМ ПАКЕТ CHROME НАПРЯМУЮ (без репозитория)
+RUN wget -q -O chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
     apt-get update && \
-    apt-get install -y google-chrome-stable --no-install-recommends && \
+    apt-get install -y ./chrome.deb --no-install-recommends && \
+    rm chrome.deb && \
     rm -rf /var/lib/apt/lists/*
 
-# Шаг 3: Настройка рабочей директории
 WORKDIR /app
-
-# Шаг 4: Установка Python зависимостей
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
-
-# Шаг 5: Копирование кода
+RUN pip install --no-cache-dir -r requirements.txt
 COPY main.py .
-
-# Шаг 6: Запуск бота
 CMD ["python", "main.py"]
