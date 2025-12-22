@@ -55,29 +55,58 @@ def make_screenshot():
             driver.quit()
 
 async def send_screenshot():
-    """Отправляет скриншот"""
+    """Отправляет скриншот с улучшенной обработкой ошибок"""
     if not chat_id or not active:
+        print("Бот не активен или chat_id не настроен")
         return
     
     try:
-        screenshot_bytes = await asyncio.to_thread(make_screenshot)
+        # Делаем скриншот с таймаутом
+        try:
+            screenshot_bytes = await asyncio.wait_for(
+                asyncio.to_thread(make_screenshot),
+                timeout=30  # 30 секунд на выполнение скриншота
+            )
+        except asyncio.TimeoutError:
+            print("❌ Таймаут при создании скриншота")
+            return
+        except Exception as e:
+            print(f"❌ Ошибка при создании скриншота: {e}")
+            traceback.print_exc()
+            return
         
-        if screenshot_bytes:
+        if not screenshot_bytes:
+            print("❌ Скриншот пустой или не создан")
+            return
+        
+        # Проверяем минимальный размер файла
+        if len(screenshot_bytes) < 100:
+            print(f"❌ Скриншот слишком мал: {len(screenshot_bytes)} байт")
+            return
+        
+        try:
+            # Создаем InputFile
             photo_file = BufferedInputFile(
                 screenshot_bytes, 
-                filename="screenshot.png"
+                filename=f"screenshot_{chat_id}.png"
             )
             
+            # Отправляем в Telegram с таймаутом
             await bot.send_photo(
                 chat_id=chat_id,
                 photo=photo_file,
                 caption=f"📸 Скриншот {WEBSITE}"
             )
-            print(f"Скриншот отправлен в чат {chat_id}")
+            print(f"✅ Скриншот успешно отправлен в чат {chat_id}")
+            
+        except Exception as e:
+            print(f"❌ Ошибка отправки в Telegram: {e}")
+            traceback.print_exc()
             
     except Exception as e:
-        print(f"Ошибка отправки: {e}")
-
+        print(f"❌ Неожиданная ошибка в send_screenshot: {e}")
+        traceback.print_exc()
+        
 async def auto_send():
     """Автоотправка по расписанию"""
     while True:
