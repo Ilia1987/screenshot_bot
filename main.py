@@ -1,10 +1,8 @@
 import os
 import asyncio
 import traceback
-import socket
 import time
 from datetime import datetime
-from urllib.parse import urlparse
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import BufferedInputFile
@@ -12,7 +10,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 from dotenv import load_dotenv
 import hashlib
@@ -22,7 +20,7 @@ load_dotenv()
 # === КОНФИГУРАЦИЯ ===
 bot = Bot(token=os.getenv('BOT_TOKEN'))
 
-# УКАЖИТЕ ПОЛНЫЙ URL С ПРОТОКОЛОМ
+# УКАЖИТЕ ПОЛНЫЙ URL С ПРОТОКОЛОМ (ЗАМЕНИТЕ НА ВАШ САЙТ)
 WEBSITE = "https://www.korma.gov.by/ru/inform_people-ru/"
 INTERVAL = 14440  # 4 часа в секундах
 
@@ -30,345 +28,200 @@ dp = Dispatcher()
 chat_id = None
 active = False
 
-class ScreenshotManager:
-    """Менеджер для управления скриншотами с повторными попытками"""
+class LightweightScreenshotManager:
+    """Облегченный менеджер для скриншотов с минимальным потреблением ресурсов"""
     
     def __init__(self):
-        self.driver = None
         self.last_screenshot_hash = None
     
-    def validate_website_url(self):
-        """Проверка и форматирование URL сайта"""
-        url = WEBSITE
-        
-        # Если нет протокола, добавляем https://
-        if not url.startswith(('http://', 'https://')):
-            url = f"https://{url}"
-            print(f"⚠️ Добавлен протокол к URL: {url}")
-        
-        # Проверяем доступность хоста
-        try:
-            parsed = urlparse(url)
-            hostname = parsed.hostname
-            
-            # Проверяем DNS разрешение
-            print(f"🔍 Проверяем DNS для {hostname}...")
-            ip = socket.gethostbyname(hostname)
-            print(f"✅ DNS разрешен: {hostname} -> {ip}")
-            
-            return url
-            
-        except socket.gaierror:
-            print(f"❌ Не удалось разрешить DNS для {url}")
-            # Пробуем добавить www
-            if not url.startswith('https://www.'):
-                alternative_url = url.replace('https://', 'https://www.')
-                print(f"🔄 Пробуем альтернативный URL: {alternative_url}")
-                return alternative_url
-            return url
-        except Exception as e:
-            print(f"⚠️ Ошибка при проверке URL: {e}")
-            return url
-    
     def setup_chrome_driver(self):
-        """Настройка Chrome драйвера с улучшенной стабильностью"""
+        """Настройка Chrome драйвера с минимальным потреблением ресурсов"""
         chrome_options = Options()
         
-        # Оптимизированные опции для стабильности
-        chrome_options.add_argument("--headless=new")  # Новый headless режим
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--disable-logging")
-        chrome_options.add_argument("--log-level=3")
-        chrome_options.add_argument("--disable-software-rasterizer")
+        # === МИНИМАЛЬНЫЙ НАБОР АРГУМЕНТОВ ДЛЯ ЭКОНОМИИ РЕСУРСОВ ===
+        chrome_options.add_argument("--headless=new")  # Самый новый и стабильный headless режим
+        chrome_options.add_argument("--no-sandbox")    # Обязательно для серверов без GUI
+        chrome_options.add_argument("--disable-dev-shm-usage")  # Решает проблему с /dev/shm
         
-        # Для обхода DNS проблем
-        chrome_options.add_argument("--dns-prefetch-disable")
-        chrome_options.add_argument("--disable-features=DnsOverHttps")
+        # === ОПТИМИЗАЦИЯ ПАМЯТИ И ЦПУ ===
+        chrome_options.add_argument("--disable-gpu")              # GPU не нужен в headless
+        chrome_options.add_argument("--disable-software-rasterizer")  # Экономит CPU
+        chrome_options.add_argument("--disable-extensions")       # Отключаем все расширения
+        chrome_options.add_argument("--disable-logging")          # Убираем лишние логи
+        chrome_options.add_argument("--log-level=3")              # Только ошибки
         
-        # Настройки сети
-        chrome_options.add_argument("--disable-quic")
-        chrome_options.add_argument("--no-proxy-server")
+        # === ОПТИМИЗАЦИЯ СЕТИ ===
+        chrome_options.add_argument("--dns-prefetch-disable")     # Экономит сетевые запросы
+        chrome_options.add_argument("--disable-quic")             # Используем только HTTP/2
         
-        # Убираем обнаружение автоматизации
+        # === ОПТИМИЗАЦИЯ ОТОБРАЖЕНИЯ ===
+        chrome_options.add_argument("--window-size=1280,720")     # Уменьшенное разрешение для экономии памяти
+        chrome_options.add_argument("--force-color-profile=srgb") # Стандартный цветовой профиль
+        
+        # === ОБХОД ЗАЩИТЫ ОТ БОТОВ ===
+        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
         
         try:
+            # === ИСПРАВЛЕНИЕ: Совместимая версия webdriver_manager ===
+            # Способ 1: Простая установка (самый надежный)
             service = Service(ChromeDriverManager().install())
             
-            # Настройки сервиса для стабильности
-            service.service_args.extend([
-                '--verbose',
-                '--log-path=chromedriver.log'
-            ])
+            # Способ 2: Если нужен больший контроль над версией
+            # from webdriver_manager.core.os_manager import ChromeType
+            # service = Service(ChromeDriverManager(chrome_type=ChromeType.GOOGLE).install())
             
-            self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            # Способ 3: Если есть проблемы с webdriver_manager, используем путь по умолчанию
+            # service = Service()  # Ищет chromedriver в PATH
             
-            # КРИТИЧЕСКИ ВАЖНО: устанавливаем таймауты
-            self.driver.set_page_load_timeout(60)
-            self.driver.implicitly_wait(30)
-            self.driver.set_script_timeout(30)
+            driver = webdriver.Chrome(service=service, options=chrome_options)
             
-            # Убираем webdriver detection
-            self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+            # === МИНИМАЛЬНЫЕ ТАЙМАУТЫ ===
+            driver.set_page_load_timeout(30)  # Уменьшено с 60
+            driver.implicitly_wait(15)        # Уменьшено с 30
+            driver.set_script_timeout(15)     # Уменьшено с 30
+            
+            # Минимальный скрипт для обхода обнаружения
+            driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
                 'source': '''
-                    Object.defineProperty(navigator, 'webdriver', {
-                        get: () => undefined
-                    });
+                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
                 '''
             })
             
-            print(f"✅ Драйвер Chrome успешно создан (v{self.driver.capabilities['browserVersion']})")
-            return self.driver
+            print(f"✅ Драйвер Chrome успешно создан")
+            return driver
             
         except Exception as e:
-            print(f"❌ Ошибка при создании драйвера: {e}")
-            self.cleanup()
+            print(f"❌ Ошибка при создании драйвера: {str(e)[:100]}")
             raise
     
-    def cleanup(self):
-        """Безопасное закрытие драйвера"""
-        if self.driver:
-            try:
-                self.driver.quit()
-                print("✅ Драйвер успешно закрыт")
-            except Exception as e:
-                print(f"⚠️ Ошибка при закрытии драйвера: {e}")
-            finally:
-                self.driver = None
-    
-    def test_connection(self, url):
-        """Тестирование подключения к сайту"""
+    def make_screenshot(self):
+        """Создание скриншота с одним драйвером на запрос"""
+        driver = None
         try:
-            import requests
-            from requests.exceptions import RequestException
+            # Создаем драйвер
+            driver = self.setup_chrome_driver()
             
-            print(f"🌐 Тестируем подключение к {url}...")
+            print(f"🌐 Загружаем {WEBSITE}")
             
-            # Убираем проверку SSL для теста
-            response = requests.get(url, timeout=10, verify=False)
+            # Загружаем страницу
+            driver.get(WEBSITE)
             
-            if response.status_code == 200:
-                print(f"✅ Сайт доступен, код: {response.status_code}")
-                return True
-            else:
-                print(f"⚠️ Сайт отвечает с кодом: {response.status_code}")
-                return False
-                
-        except RequestException as e:
-            print(f"❌ Ошибка подключения: {e}")
-            return False
+            # Ждем загрузки с минимальным временем
+            WebDriverWait(driver, 25).until(
+                lambda d: d.execute_script('return document.readyState') == 'complete'
+            )
+            
+            # Минимальная пауза для рендеринга (уменьшено)
+            time.sleep(1)
+            
+            # Создаем скриншот
+            screenshot_bytes = driver.get_screenshot_as_png()
+            
+            # Базовая проверка
+            if not screenshot_bytes or len(screenshot_bytes) < 100:
+                return None
+            
+            # Проверка на дубликаты
+            current_hash = hashlib.md5(screenshot_bytes).hexdigest()
+            if current_hash == self.last_screenshot_hash:
+                print("⚠️ Скриншот идентичен предыдущему")
+            self.last_screenshot_hash = current_hash
+            
+            print(f"✅ Скриншот создан ({len(screenshot_bytes)//1024} КБ)")
+            return screenshot_bytes
+            
+        except TimeoutException:
+            print("⏱️ Таймаут при загрузке страницы")
+            return None
         except Exception as e:
-            print(f"❌ Неожиданная ошибка при тесте: {e}")
-            return False
-    
-    def make_screenshot_with_retry(self, max_retries=3):
-        """Делает скриншот сайта с повторными попытками"""
-        
-        # Получаем валидный URL
-        target_url = self.validate_website_url()
-        print(f"🎯 Целевой URL: {target_url}")
-        
-        # Тестируем подключение
-        if not self.test_connection(target_url):
-            print("⚠️ Предупреждение: сайт может быть недоступен")
-        
-        for attempt in range(max_retries):
-            try:
-                print(f"📸 Попытка {attempt + 1} из {max_retries}")
-                
-                # Пересоздаем драйвер если нужно
-                if not self.driver:
-                    self.setup_chrome_driver()
-                
-                print(f"🌐 Открываем {target_url}")
-                
-                # Открываем страницу
-                self.driver.get(target_url)
-                
-                # Ждем полной загрузки
-                WebDriverWait(self.driver, 40).until(
-                    lambda d: d.execute_script('return document.readyState') == 'complete'
-                )
-                
-                # Дополнительная проверка загрузки
-                time.sleep(2)
-                
-                # Проверяем, что страница загрузилась
-                current_url = self.driver.current_url
-                print(f"📄 Текущий URL: {current_url}")
-                
-                # Делаем скриншот
-                screenshot_bytes = self.driver.get_screenshot_as_png()
-                
-                # Проверяем валидность скриншота
-                if not screenshot_bytes or len(screenshot_bytes) < 100:
-                    raise ValueError(f"Скриншот слишком мал: {len(screenshot_bytes) if screenshot_bytes else 0} байт")
-                
-                # Проверяем хеш для избежания дубликатов
-                current_hash = hashlib.md5(screenshot_bytes).hexdigest()
-                if current_hash == self.last_screenshot_hash:
-                    print("⚠️ Скриншот идентичен предыдущему")
-                
-                self.last_screenshot_hash = current_hash
-                print(f"✅ Скриншот создан успешно ({len(screenshot_bytes)} байт)")
-                return screenshot_bytes
-                
-            except TimeoutException:
-                print(f"⏱️ Таймаут при загрузке (попытка {attempt + 1})")
-                self.cleanup()
-                if attempt < max_retries - 1:
-                    print("🔄 Повторяем попытку...")
-                    time.sleep(3)
-                else:
-                    print("❌ Превышено количество попыток")
-                    return None
-                    
-            except WebDriverException as e:
-                error_str = str(e).lower()
-                print(f"🔧 Ошибка WebDriver: {error_str[:200]}")
-                
-                if "err_name_not_resolved" in error_str:
-                    print(f"❌ DNS ошибка: не удалось разрешить имя {WEBSITE}")
-                    
-                    # Пробуем альтернативный URL
-                    if attempt == 0:
-                        if not target_url.startswith('https://www.'):
-                            alternative = target_url.replace('https://', 'https://www.')
-                            print(f"🔄 Пробуем с www: {alternative}")
-                            target_url = alternative
-                    
-                    self.cleanup()
-                    if attempt < max_retries - 1:
-                        print("🔄 Повторяем с альтернативным URL...")
-                        time.sleep(2)
-                    else:
-                        print("❌ Все DNS попытки не удались")
-                        return None
-                        
-                elif "invalid session id" in error_str or "disconnected" in error_str:
-                    print(f"🔌 Сессия утеряна (попытка {attempt + 1})")
-                    self.cleanup()
-                    if attempt < max_retries - 1:
-                        print("🔄 Пересоздаем драйвер...")
-                        time.sleep(2)
-                    else:
-                        print("❌ Не удалось восстановить сессию")
-                        return None
-                else:
-                    print(f"❌ Другая ошибка WebDriver: {e}")
-                    self.cleanup()
-                    if attempt < max_retries - 1:
-                        time.sleep(2)
-                    else:
-                        return None
-                        
-            except Exception as e:
-                print(f"❌ Неожиданная ошибка при создании скриншота: {e}")
-                traceback.print_exc()
-                self.cleanup()
-                if attempt < max_retries - 1:
-                    time.sleep(2)
-                else:
-                    return None
-        
-        return None
+            print(f"❌ Ошибка: {str(e)[:100]}")
+            return None
+        finally:
+            # ВСЕГДА закрываем драйвер для освобождения памяти
+            if driver:
+                try:
+                    driver.quit()
+                except:
+                    pass
 
-# Глобальный менеджер скриншотов
-screenshot_manager = ScreenshotManager()
+# Глобальный менеджер
+screenshot_manager = LightweightScreenshotManager()
 
 async def send_screenshot():
-    """Отправляет скриншот с улучшенной обработкой ошибок"""
+    """Отправка скриншота с оптимизированной логикой"""
     global chat_id, active
     
     if not chat_id or not active:
-        print("⚠️ Бот не активен или chat_id не настроен")
+        print("⚠️ Бот не активен")
         return
     
+    start_time = time.time()
+    
     try:
-        print(f"🔄 Начинаем создание скриншота для {WEBSITE}")
+        print("📸 Создаем скриншот...")
         
         # Делаем скриншот с таймаутом
         try:
             screenshot_bytes = await asyncio.wait_for(
-                asyncio.to_thread(screenshot_manager.make_screenshot_with_retry),
-                timeout=120  # 120 секунд на создание скриншота
+                asyncio.to_thread(screenshot_manager.make_screenshot),
+                timeout=45  # Уменьшено с 120
             )
         except asyncio.TimeoutError:
-            print("❌ Таймаут при создании скриншота")
-            await bot.send_message(chat_id, "⏱️ Таймаут при создании скриншота")
+            print("❌ Таймаут")
+            await bot.send_message(chat_id, "⏱️ Создание скриншота заняло слишком много времени")
             return
         except Exception as e:
-            print(f"❌ Ошибка при создании скриншота: {e}")
-            await bot.send_message(chat_id, f"❌ Ошибка: {str(e)[:100]}")
+            print(f"❌ Ошибка: {e}")
             return
         
         if not screenshot_bytes:
-            print("❌ Скриншот не создан")
-            error_msg = f"❌ Не удалось создать скриншот {WEBSITE}\n"
-            error_msg += "Возможные причины:\n"
-            error_msg += "• Сайт недоступен\n"
-            error_msg += "• Проблемы с DNS\n"
-            error_msg += "• Сайт блокирует ботов"
-            await bot.send_message(chat_id, error_msg)
+            await bot.send_message(chat_id, "❌ Не удалось создать скриншот. Сайт может быть недоступен.")
             return
         
         try:
-            # Создаем имя файла с временной меткой
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"screenshot_{WEBSITE.replace('https://', '').replace('http://', '')}_{timestamp}.png"
+            # Оптимизированное создание имени файла
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+            filename = f"screenshot_{timestamp}.png"
             
-            # Создаем InputFile
-            photo_file = BufferedInputFile(
-                screenshot_bytes, 
-                filename=filename
-            )
+            # Отправляем в Telegram
+            photo_file = BufferedInputFile(screenshot_bytes, filename=filename)
             
-            # Отправляем в Telegram с таймаутом
-            caption = f"📸 Скриншот {WEBSITE}\n🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            elapsed = time.time() - start_time
+            caption = f"📸 {WEBSITE}\n⏱ {elapsed:.1f} сек\n🕐 {datetime.now().strftime('%H:%M:%S')}"
             
             await bot.send_photo(
                 chat_id=chat_id,
                 photo=photo_file,
                 caption=caption
             )
-            print(f"✅ Скриншот успешно отправлен в чат {chat_id}")
+            
+            print(f"✅ Отправлено за {elapsed:.1f} сек")
             
         except Exception as e:
-            print(f"❌ Ошибка отправки в Telegram: {e}")
-            await bot.send_message(chat_id, f"❌ Ошибка отправки: {str(e)[:100]}")
+            print(f"❌ Ошибка отправки: {e}")
             
     except Exception as e:
-        print(f"❌ Неожиданная ошибка в send_screenshot: {e}")
-        traceback.print_exc()
+        print(f"❌ Неожиданная ошибка: {e}")
 
 async def auto_send():
-    """Автоотправка по расписанию"""
-    print(f"⏰ Автоотправка запущена, интервал: {INTERVAL//60} минут")
+    """Оптимизированная автоотправка"""
+    print(f"⏰ Автоотправка запущена, интервал: {INTERVAL//3600} часов")
     
     while True:
         try:
             if active and chat_id:
-                print(f"🔔 Запланированная отправка скриншота...")
                 await send_screenshot()
-            else:
-                print(f"⏸ Автоотправка приостановлена")
             
-            # Ожидание с возможностью прерывания
-            for _ in range(INTERVAL):
-                await asyncio.sleep(1)
+            # Эффективное ожидание
+            await asyncio.sleep(INTERVAL)
                 
         except asyncio.CancelledError:
-            print("⏹️ Автоотправка остановлена")
             break
         except Exception as e:
             print(f"❌ Ошибка в auto_send: {e}")
-            traceback.print_exc()
-            await asyncio.sleep(60)  # Пауза при ошибке
+            await asyncio.sleep(60)
 
 @dp.message(Command("start"))
 async def start(msg: types.Message):
@@ -380,7 +233,7 @@ async def start(msg: types.Message):
     await msg.answer(
         f"✅ Бот запущен\n"
         f"🌐 Сайт: {WEBSITE}\n"
-        f"⏰ Интервал: {INTERVAL//60} минут\n\n"
+        f"⏰ Интервал: {INTERVAL//3600} часов\n\n"
         f"Команды:\n"
         f"/send - скриншот сейчас\n"
         f"/stop - остановить\n"
@@ -405,16 +258,7 @@ async def stop(msg: types.Message):
     """Остановить автоотправку"""
     global active
     active = False
-    await msg.answer("⏸ Автоотправка остановлена\n/start - возобновить")
-
-@dp.message(Command("restart"))
-async def restart(msg: types.Message):
-    """Возобновить автоотправку"""
-    global active, chat_id
-    chat_id = msg.chat.id
-    active = True
-    await msg.answer("▶️ Автоотправка возобновлена!")
-    await send_screenshot()
+    await msg.answer("⏸ Автоотправка остановлена")
 
 @dp.message(Command("status"))
 async def status(msg: types.Message):
@@ -422,11 +266,9 @@ async def status(msg: types.Message):
     status_text = "✅ Активен" if active else "⏸ Остановлен"
     
     await msg.answer(
-        f"📊 Статус бота:\n"
-        f"• Статус: {status_text}\n"
-        f"• Чат ID: {chat_id or 'не настроен'}\n"
+        f"📊 Статус:\n"
+        f"• {status_text}\n"
         f"• Сайт: {WEBSITE}\n"
-        f"• Интервал: {INTERVAL//60} минут\n"
         f"• Время: {datetime.now().strftime('%H:%M:%S')}"
     )
 
@@ -434,12 +276,10 @@ async def status(msg: types.Message):
 async def help_cmd(msg: types.Message):
     """Помощь"""
     await msg.answer(
-        f"🤖 Бот для скриншотов сайта\n\n"
-        f"Команды:\n"
+        f"🤖 Бот для скриншотов\n\n"
         f"/start - запустить\n"
         f"/send - скриншот сейчас\n"
         f"/stop - остановить\n"
-        f"/restart - перезапустить\n"
         f"/status - статус\n"
         f"/help - справка"
     )
@@ -447,55 +287,44 @@ async def help_cmd(msg: types.Message):
 @dp.message()
 async def other(msg: types.Message):
     """Ответ на другие сообщения"""
-    await msg.answer("Используйте /start для запуска бота")
+    await msg.answer("Используйте /start для запуска")
 
 async def main():
     """Основная функция"""
     print(f"🚀 Бот запускается...")
     print(f"🌐 Сайт: {WEBSITE}")
-    print(f"⏰ Интервал: {INTERVAL//60} минут")
+    print(f"⏰ Интервал: {INTERVAL//3600} часов")
+    print(f"⚡ Режим: оптимизированный для экономии ресурсов")
     
-    # Предварительная проверка сайта
-    print("🔍 Проверяем доступность сайта...")
+    # Проверяем версию webdriver_manager
     try:
-        import requests
-        requests.packages.urllib3.disable_warnings()  # Отключаем SSL предупреждения
-        
-        test_url = WEBSITE if WEBSITE.startswith('http') else f'https://{WEBSITE}'
-        response = requests.get(test_url, timeout=10, verify=False)
-        print(f"✅ Предварительная проверка: сайт отвечает (код {response.status_code})")
-    except ImportError:
-        print("⚠️ requests не установлен, пропускаем проверку")
-    except Exception as e:
-        print(f"⚠️ Предупреждение: не удалось проверить сайт - {e}")
+        import webdriver_manager
+        print(f"📦 webdriver_manager версия: {webdriver_manager.__version__}")
+    except:
+        print("⚠️ Не удалось проверить версию webdriver_manager")
     
-    # Запуск автоотправки
+    # Запускаем автоотправку в фоне
     auto_send_task = asyncio.create_task(auto_send())
     
     try:
         await dp.start_polling(bot)
     except KeyboardInterrupt:
         print("\n⚠️ Получен сигнал завершения")
-    except Exception as e:
-        print(f"❌ Ошибка в main: {e}")
-        traceback.print_exc()
     finally:
-        # Отмена задачи автоотправки
+        # Аккуратно останавливаем задачу
         auto_send_task.cancel()
         try:
             await auto_send_task
         except asyncio.CancelledError:
             pass
         
-        # Очистка ресурсов
-        screenshot_manager.cleanup()
+        print("👋 Бот завершил работу")
 
 if __name__ == "__main__":
-    # Добавляем обработку KeyboardInterrupt
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n👋 Бот завершил работу")
+        print("\n👋 Завершено пользователем")
     except Exception as e:
         print(f"❌ Критическая ошибка: {e}")
         traceback.print_exc()
