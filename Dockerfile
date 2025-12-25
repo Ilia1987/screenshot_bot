@@ -1,9 +1,9 @@
 # Используем официальный Python образ
 FROM python:3.11-slim
 
-# Устанавливаем системные зависимости (если нужны)
+# Устанавливаем системные зависимости
 RUN apt-get update && apt-get install -y \
-    gcc \
+    sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Создаем директорию приложения
@@ -18,9 +18,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем исходный код
 COPY . .
 
-# Создаем пользователя для безопасности (опционально)
+# Создаем пользователя для безопасности
 RUN useradd -m -u 1000 botuser && chown -R botuser:botuser /app
 USER botuser
 
 # Запускаем бота
-CMD ["python", "bot.py"]
+CMD ["python", "main.py"]
