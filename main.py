@@ -29,7 +29,7 @@ dp = Dispatcher()
 
 # Конфигурация
 WEBSITE_URL = 'https://www.korma.gov.by/ru/inform_people-ru/'
-SEND_INTERVAL_MINUTES = 180
+SEND_INTERVAL_MINUTES = 4320
 
 # Глобальные переменные
 NEXT_SEND_TIME = None
